@@ -12,14 +12,13 @@ from flax import nnx
 from hydrax.alg_base import SamplingBasedController
 from tensorboardX import SummaryWriter
 
-from gpc.architectures import ValueMLP
 from gpc.augmented import PACParams, PolicyAugmentedController
 from gpc.envs import SimulatorState, TrainingEnv
 from gpc.policy import Policy
-from gpc.value_training import FviDataset #,ValueApproximation
+from gpc.value_training import Fvi
 
 Params = Any
-jax.clear_backends()  # Clears the JAX backend cache
+# jax.clear_backends()  # Clears the JAX backend cache
 # jax.config.update("jax_disable_jit", True)  # Only temporarily
 
 def simulate_episode(
@@ -233,87 +232,6 @@ def fit_policy(
 
     return losses[-1]
 
-def approximate_value(
-    observations: jax.Array,
-    value_targets: jax.Array,
-    model: nnx.Module,
-    optimizer: nnx.Optimizer,
-    batch_size: int,
-    num_epochs: int,
-    rng: jax.Array,
-) -> jax.Array:
-    """Approximate the value function with a neural network using fitted value iteration."""
-
-    num_data_points = observations.shape[0]
-    num_batches = max(1, num_data_points // batch_size)
-
-    def _loss_fn(
-        model: nnx.Module,
-        obs: jax.Array,
-        value_targets: jax.Array,
-    ) -> jax.Array:
-        """Fitted Value Iteration loss"""
-        pred = model(obs)
-        # print(f"pred shape: {pred.shape}")
-        # print(f"val targs shape: {value_targets.shape}")
-        return 0.5*jnp.mean(jnp.square(pred - value_targets))
-
-    def _train_step(
-        model: nnx.Module,
-        optimizer: nnx.Optimizer,
-        rng: jax.Array,
-    ) -> Tuple[jax.Array, jax.Array]:
-        """Perform a gradient descent step on a batch of data."""
-        # Get a random batch of data
-        # rng, batch_rng = jax.random.split(rng)
-        # batch_idx = jax.random.randint(
-        #     batch_rng, (batch_size,), 0, num_data_points
-        # )
-
-        # NOTE: When I train on the same set of data at least the loss goes down
-        batch_idx = 0
-
-        # Get the observation and value targets
-        batch_obs = observations[batch_idx]
-        batch_target = value_targets[batch_idx]
-
-# TODO: Debug
-        print(f"obs size: {observations.shape}")
-        print(f"target size: {value_targets.shape}")
-        print(f"batch obs size: {batch_obs.shape}")
-        print(f"batch target size: {batch_target.shape}")
-
-        # Compute the loss and its gradient
-        loss, grad = nnx.value_and_grad(_loss_fn)(
-            model, batch_obs, batch_target
-        )
-
-        # Update the optimizer and model parameters in-place via flax.nnx
-        # jax.debug.print("Grad norm: {}", jnp.linalg.norm(grad))
-        optimizer.update(grad)
-
-        return rng, loss
-
-    # for i in range(num_batches * num_epochs): take a training step
-    # @nnx.scan
-    # def _scan_fn(carry: Tuple, i: int) -> Tuple:
-    #     model, optimizer, rng = carry
-    #     rng, loss = _train_step(model, optimizer, rng)
-    #     jax.debug.print("Epoch: {}, loss: {}", i, loss)
-    #     return (model, optimizer, rng), loss
-    #
-    # _, losses = _scan_fn(
-    #     (model, optimizer, rng), jnp.arange(num_epochs)
-    # )
-
-    losses = jnp.zeros(1)
-    for i in range(num_epochs):
-        rng, losses = _train_step(model, optimizer, rng)
-        if i % 10 == 0:
-            jax.debug.print("Epoch: {}, loss: {}", i, losses)
-
-    return losses #losses[-1]
-
 def train(  # noqa: PLR0915 this is a long function, don't limit to 50 lines
     env: TrainingEnv,
     ctrl: SamplingBasedController,
@@ -512,66 +430,10 @@ def train(  # noqa: PLR0915 this is a long function, don't limit to 50 lines
             rng,
         )
 
-    value_batch_size = 500
-    value_num_epochs = 300
-
-    # @nnx.jit
-    def jit_value_fit(
-        Vnet: nnx.Module,
-        normalizer: nnx.BatchNorm,
-        optimizer: nnx.Optimizer,
-        obs: jax.Array,
-        targets: jax.Array,
-    ) -> jax.Array:
-
-        # Reshape for fitting
-        y = obs.reshape(-1, obs.shape[-1])
-        V = targets.reshape(-1)
-
-        # Normalize the observations (?) Why/how?
-        y = normalizer(y, use_running_average=not normalize_observations)
-
-        # Normalize targets
-        Vmean = jnp.mean(V)
-        Vstd = jnp.std(V)
-
-        V = (V - Vmean) / Vstd
-
-        return approximate_value(
-            observations=y,
-            value_targets=V,
-            optimizer=optimizer,
-            model=Vnet,
-            batch_size=value_batch_size,
-            num_epochs=value_num_epochs,
-            rng=rng,
-        )
-        # return jnp.zeros(1)
-
     train_start = datetime.now()
 
     # TODO: Remove
     num_iters = 4
-
-    # Object to hold the value iteration data
-    fvi_data = FviDataset(obs=jnp.zeros((num_iters, batch_size, env.episode_length, env.observation_size)),
-                          targets=jnp.zeros((num_iters, batch_size, env.episode_length)))
-
-    Vnet = ValueMLP(
-            observation_size=env.observation_size,
-            hidden_layers=[32, 32],
-            rngs=nnx.Rngs(0),
-        )
-    value_normalizer = nnx.BatchNorm(
-        num_features=env.observation_size,
-        momentum=0.1,
-        use_bias=False,
-        use_scale=False,
-        use_fast_variance=False,
-        rngs=nnx.Rngs(0),
-    )
-    value_optimizer = nnx.Optimizer(Vnet, optax.adamw(learning_rate))
-    # Vhat = ValueApproximation(model=Vnet, normalizer=value_normalizer)
 
     for i in range(num_iters):
         # Simulate and record the best action sequences. Some of the action
@@ -584,10 +446,6 @@ def train(  # noqa: PLR0915 this is a long function, don't limit to 50 lines
         )
         y.block_until_ready()
         sim_time = time.time() - sim_start
-
-        # Save the observation and value function targets
-        fvi_data.obs = fvi_data.obs.at[i, :, :, :].set(y)
-        fvi_data.targets = fvi_data.targets.at[i, :, :].set(jnp.minimum(J_spc, J_policy))
 
         # Render the first few trajectories for visualization
         # N.B. this uses CPU mujoco's rendering utils, so we need to do it
@@ -611,7 +469,9 @@ def train(  # noqa: PLR0915 this is a long function, don't limit to 50 lines
         value_loss = 1e10
         if i == num_iters - 1:
             # Fit the value network
-            value_loss = jit_value_fit(Vnet, value_normalizer, value_optimizer, fvi_data.obs, fvi_data.targets)
+            value_approximator = Fvi(env.observation_size, y, jnp.minimum(J_spc, J_policy),
+                                     1000, 1000)
+            value_loss = value_approximator.fit()
             value_loss.block_until_ready()
 
 
@@ -655,11 +515,11 @@ def train(  # noqa: PLR0915 this is a long function, don't limit to 50 lines
     # Plotting the value targets
     # For, now just gonna hardcode for the pendulum
     # Recover the pendulum angle
-    theta = jnp.arctan2(fvi_data.obs[-1, :, :, 1], fvi_data.obs[-1, :, :, 0]).reshape(-1)
-    thetadot = fvi_data.obs[-1, :, :, 2].reshape(-1)
+    theta = jnp.arctan2(value_approximator.obs[:, :, 1], value_approximator.obs[:, :, 0]).reshape(-1)
+    thetadot = value_approximator.obs[:, :, 2].reshape(-1)
     print(theta.shape)
     print(thetadot.shape)
-    Z = fvi_data.targets[-1, :, :].reshape(-1)
+    Z = value_approximator.targets[:, :].reshape(-1)
     print(Z.shape)
 
     plt.scatter(theta, thetadot, c=Z)
@@ -685,7 +545,7 @@ def train(  # noqa: PLR0915 this is a long function, don't limit to 50 lines
     print(f"ct size: {ct.shape}")
     print(f"Y size: {Y.shape}")
 
-    Z_flat = Vnet(obs_points)
+    Z_flat = value_approximator.approximate(obs_points)
     print(f"Z_flat size: {Z_flat.shape}")
     Z = Z_flat.reshape((n_points,n_points))
     print(f"Z size: {Z.shape}")
