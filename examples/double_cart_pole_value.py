@@ -5,8 +5,8 @@ from flax import nnx
 from hydrax.algs import PredictiveSampling
 from hydrax.simulation.deterministic import run_interactive as run_sampling
 
-from gpc.architectures import DenoisingCNN
-from gpc.envs import WalkerEnv
+from gpc.architectures import DenoisingMLP
+from gpc.envs import DoubleCartPoleValueEnv
 from gpc.policy import Policy
 from gpc.sampling import BootstrappedPredictiveSampling
 from gpc.testing import test_interactive
@@ -14,7 +14,9 @@ from gpc.training import train
 
 if __name__ == "__main__":
     # Parse command line arguments
-    parser = argparse.ArgumentParser(description="Planar biped locomotion")
+    parser = argparse.ArgumentParser(
+        description="Balance a double inverted pendulum on a cart"
+    )
     subparsers = parser.add_subparsers(
         dest="task", help="What to do (choose one)"
     )
@@ -26,29 +28,31 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # Set up the environment and save file
-    env = WalkerEnv(episode_length=500)
-    save_file = "/tmp/walker_policy.pkl"
+    env = DoubleCartPoleValueEnv(episode_length=400)
+    save_file = "/tmp/double_cart_pole_value_policy.pkl"
 
     if args.task == "train":
         # Train the policy and save it to a file
         ctrl = PredictiveSampling(env.task, num_samples=16, noise_level=0.3)
-        net = DenoisingCNN(
+        net = DenoisingMLP(
             action_size=env.task.model.nu,
             observation_size=env.observation_size,
             horizon=env.task.planning_horizon,
-            feature_dims=[64, 64],
-            timestep_embedding_dim=16,
+            hidden_layers=[128, 128],
             rngs=nnx.Rngs(0),
         )
         policy = train(
             env,
             ctrl,
             net,
-            log_dir="/tmp/gpc_walker",
             num_policy_samples=16,
-            num_iters=20,
-            num_envs=128,
-            num_epochs=10,
+            log_dir="/tmp/gpc_double_cart_pole",
+            num_iters=50,
+            num_envs=256,
+            num_epochs=100,
+            checkpoint_every=5,
+            num_videos=4,
+            with_value=True,
         )
         policy.save(save_file)
         print(f"Saved policy to {save_file}")
@@ -57,9 +61,7 @@ if __name__ == "__main__":
         # Load the policy from a file and test it interactively
         print(f"Loading policy from {save_file}")
         policy = Policy.load(save_file)
-        test_interactive(
-            env, policy, inference_timestep=0.01, warm_start_level=1.0, log_file="logs/walker_log.csv",
-        )
+        test_interactive(env, policy, inference_timestep=0.1)
 
     elif args.task == "sample":
         # Use the policy to bootstrap sampling-based MPC
@@ -67,17 +69,15 @@ if __name__ == "__main__":
         ctrl = BootstrappedPredictiveSampling(
             policy,
             env.get_obs,
-            warm_start_level=0.5,
-            inference_timestep=0.1,
-            num_policy_samples=128,
+            inference_timestep=0.01,
+            num_policy_samples=4,
             task=env.task,
             num_samples=1,
             noise_level=0.3,
         )
-
         mj_model = env.task.mj_model
         mj_data = mujoco.MjData(mj_model)
-        run_sampling(ctrl, mj_model, mj_data, frequency=50, fixed_camera_id=0)
+        run_sampling(ctrl, mj_model, mj_data, frequency=50)
 
     else:
         parser.print_help()

@@ -1,11 +1,13 @@
 from abc import ABC, abstractmethod
-
+from typing import Union
 import jax
 import mujoco
 import numpy as np
 from flax.struct import dataclass
 from hydrax.task_base import Task
 from mujoco import mjx
+
+from gpc.tasks.task_value import TaskValue
 
 
 @dataclass
@@ -26,7 +28,7 @@ class SimulatorState:
 class TrainingEnv(ABC):
     """Abstract class defining a training environment."""
 
-    def __init__(self, task: Task, episode_length: int) -> None:
+    def __init__(self, task: Union[Task, TaskValue], episode_length: int) -> None:
         """Initialize the training environment."""
         self.task = task
         self.episode_length = episode_length

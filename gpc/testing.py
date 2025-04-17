@@ -1,4 +1,7 @@
+import csv
+import os
 import time
+from datetime import datetime
 from functools import partial
 
 import jax
@@ -17,6 +20,7 @@ def test_interactive(
     mj_data: mujoco.MjData = None,
     inference_timestep: float = 0.1,
     warm_start_level: float = 1.0,
+    log_file = None,
 ) -> None:
     """Test a GPC policy with an interactive simulation.
 
@@ -26,6 +30,7 @@ def test_interactive(
         mj_data: The initial state for the simulation.
         inference_timestep: The timestep dt to use for flow matching inference.
         warm_start_level: The warm start level to use for the policy.
+        log_file: The log file to use.
     """
     rng = jax.random.key(0)
     task = env.task
@@ -37,7 +42,7 @@ def test_interactive(
         partial(policy.apply, warm_start_level=warm_start_level)
     )
 
-    # Set up the mujoco simultion
+    # Set up the mujoco simulation
     mj_model = task.mj_model
     if mj_data is None:
         mj_data = mujoco.MjData(mj_model)
@@ -47,6 +52,15 @@ def test_interactive(
 
     # Set up an observation function
     mjx_data = mjx.make_data(task.model)
+
+    writer = None
+
+    if log_file is not None:
+        timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+        name, ext = os.path.splitext(log_file)
+        log_file = f"{name}_{timestamp}{ext}"
+        log = open(log_file, "w")
+        writer = csv.writer(log)
 
     @jax.jit
     def get_obs(mjx_data: mjx.Data) -> jax.Array:
@@ -84,6 +98,15 @@ def test_interactive(
 
             mujoco.mj_step(mj_model, mj_data)
             viewer.sync()
+
+            if writer is not None:
+                # Write the state and cost to a log
+                row = [mj_data.time]
+                row += mj_data.qpos.tolist()
+                row += mj_data.qvel.tolist()
+                row += mj_data.ctrl.tolist()
+                row += [env.task.running_cost(mj_data, mj_data.ctrl)]
+                writer.writerow(row)
 
             elapsed = time.time() - st
             if elapsed < mj_model.opt.timestep:

@@ -1,11 +1,12 @@
-from dataclasses import dataclass
-from flax.struct import dataclass as fdataclass
+from pathlib import Path
+from typing import Tuple, Union
+
+import cloudpickle
 from flax import nnx
 import jax.numpy as jnp
 import jax
 from typing import Tuple
 from gpc.architectures import ValueMLP
-from gpc.envs import TrainingEnv
 import optax
 
 
@@ -34,11 +35,11 @@ def approximate_value(
     """Approximate the value function with a neural network using fitted value iteration."""
 
     num_data_points = observations.shape[0]
-    num_batches = max(1, num_data_points // batch_size)
 
     print(f"obs size: {observations.shape}")
     print(f"target size: {value_targets.shape}")
 
+    @nnx.jit
     def _train_step(
             model: nnx.Module,
             optimizer: nnx.Optimizer,
@@ -90,11 +91,9 @@ def approximate_value(
         rng, losses, grad_norm = _train_step(model, optimizer, rng)
         if i % 20 == 0:
             jax.debug.print("Epoch: {}, loss: {}. grad norm: {}", i, losses, grad_norm)
-            # Check
-            # pred = model(observations[0])
-            # print(pred)
-            # print(observations[0])
-            # print(value_targets[0])
+
+        if (grad_norm < 1e-4):
+            break
 
     return losses  # losses[-1]
 
@@ -108,7 +107,6 @@ def jit_value_fit(
         num_epochs: int,
 ) -> jax.Array:
     # Reshape for fitting
-    # y = obs #obs.reshape(-1, obs.shape[-1])
     y = obs.reshape(-1, obs.shape[-1])
     print(f"y shape {y.shape}")
     V = targets.reshape(-1, 1)
@@ -137,19 +135,17 @@ class Fvi:
     batch_size: int
     num_epochs: int
     learning_rate: float
-    V_mean: jax.Array
-    V_std: jax.Array
 
-    def __init__(self, obs_size: int, obs: jnp.ndarray, targets: jnp.ndarray,
+    def __init__(self, obs_size: int,
                  batch_size: int, num_epochs: int):
-        self.obs = obs
-        self.targets = targets
 
+        # TODO: Make sure this is initialized to only output 0
         self.net = ValueMLP(
             observation_size=obs_size,
-            hidden_layers=[32, 32],
+            hidden_layers=[32, 32, 32],
             rngs=nnx.Rngs(0),
         )
+
         self.normalizer = nnx.BatchNorm(
             num_features=obs_size,
             momentum=0.1,
@@ -165,6 +161,13 @@ class Fvi:
 
         self.batch_size = batch_size
         self.num_epochs = num_epochs
+
+        self.V_std = 0
+        self.V_mean = 0
+
+    def set_data(self, obs: jnp.ndarray, targets: jnp.ndarray):
+        self.obs = obs
+        self.targets = targets
 
     def fit(self) -> jax.Array:
         # Normalize targets
@@ -193,3 +196,26 @@ class Fvi:
 
         # Denormalize
         return out * self.V_std + self.V_mean
+
+    def save(self, path: Union[Path, str]) -> None:
+        """Save the policy to a file.
+
+        Args:
+            path: The path to save the policy to.
+        """
+        with open(path, "wb") as f:
+            cloudpickle.dump(self, f)
+
+    @staticmethod
+    def load(path: Union[Path, str]) -> "value_fn":
+        """Load a policy from a file.
+
+        Args:
+            path: The path to load the policy from.
+
+        Returns:
+            The loaded policy instance
+        """
+        with open(path, "rb") as f:
+            value_fn = cloudpickle.load(f)
+        return value_fn

@@ -6,7 +6,7 @@ from hydrax.algs import PredictiveSampling
 from hydrax.simulation.deterministic import run_interactive as run_sampling
 
 from gpc.architectures import DenoisingCNN
-from gpc.envs import WalkerEnv
+from gpc.envs import WalkerValueEnv
 from gpc.policy import Policy
 from gpc.sampling import BootstrappedPredictiveSampling
 from gpc.testing import test_interactive
@@ -26,8 +26,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # Set up the environment and save file
-    env = WalkerEnv(episode_length=500)
-    save_file = "/tmp/walker_policy.pkl"
+    env = WalkerValueEnv(episode_length=500)
+    save_file = "/tmp/walker_value_policy.pkl"
 
     if args.task == "train":
         # Train the policy and save it to a file
@@ -49,6 +49,7 @@ if __name__ == "__main__":
             num_iters=20,
             num_envs=128,
             num_epochs=10,
+            with_value=True,
         )
         policy.save(save_file)
         print(f"Saved policy to {save_file}")
@@ -58,7 +59,7 @@ if __name__ == "__main__":
         print(f"Loading policy from {save_file}")
         policy = Policy.load(save_file)
         test_interactive(
-            env, policy, inference_timestep=0.01, warm_start_level=1.0, log_file="logs/walker_log.csv",
+            env, policy, inference_timestep=0.01, warm_start_level=1.0, log_file="logs/walker_value_log.csv"
         )
 
     elif args.task == "sample":
