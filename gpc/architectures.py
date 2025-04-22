@@ -45,7 +45,7 @@ class DenoisingMLP(nnx.Module):
         self,
         action_size: int,
         observation_size: int,
-        horizon: int,
+        knots: int,
         hidden_layers: Sequence[int],
         rngs: nnx.Rngs,
     ):
@@ -54,17 +54,17 @@ class DenoisingMLP(nnx.Module):
         Args:
             action_size: Dimension of the actions (u).
             observation_size: Dimension of the observations (y).
-            horizon: Number of steps in the action sequence (U = [u0, u1, ...]).
+            knots: Number of knots in the action sequence.
             hidden_layers: Sizes of all hidden layers.
             rngs: Random number generators for initialization.
         """
         self.action_size = action_size
         self.observation_size = observation_size
-        self.horizon = horizon
+        self.knots = knots
         self.hidden_layers = hidden_layers
 
-        input_size = horizon * action_size + observation_size + 1
-        output_size = horizon * action_size
+        input_size = knots * action_size + observation_size + 1
+        output_size = knots * action_size
         self.mlp = MLP(
             [input_size] + list(hidden_layers) + [output_size], rngs=rngs
         )
@@ -72,10 +72,10 @@ class DenoisingMLP(nnx.Module):
     def __call__(self, u: jax.Array, y: jax.Array, t: jax.Array) -> jax.Array:
         """Forward pass through the network."""
         batches = u.shape[:-2]
-        u_flat = u.reshape(batches + (self.horizon * self.action_size,))
+        u_flat = u.reshape(batches + (self.knots * self.action_size,))
         x = jnp.concatenate([u_flat, y, t], axis=-1)
         x = self.mlp(x)
-        return x.reshape(batches + (self.horizon, self.action_size))
+        return x.reshape(batches + (self.knots, self.action_size))
 
 
 class PositionalEmbedding(nnx.Module):
@@ -205,7 +205,7 @@ class DenoisingCNN(nnx.Module):
         self,
         action_size: int,
         observation_size: int,
-        horizon: int,
+        knots: int,
         feature_dims: Sequence[int],
         rngs: nnx.Rngs,
         kernel_size: int = 3,
@@ -216,7 +216,7 @@ class DenoisingCNN(nnx.Module):
         Args:
             action_size: Dimension of the actions (u).
             observation_size: Dimension of the observations (y).
-            horizon: Number of steps in the action sequence (U = [u0, u1, ...]).
+            knots: Number of steps in the action sequence (U = [u0, u1, ...]).
             feature_dims: List of feature dimensions.
             rngs: Random number generators for initialization.
             kernel_size: Size of the convolutional kernel.
@@ -224,7 +224,7 @@ class DenoisingCNN(nnx.Module):
         """
         self.action_size = action_size
         self.observation_size = observation_size
-        self.horizon = horizon
+        self.knots = knots
         self.num_layers = len(feature_dims) + 1
         self.positional_embedding = PositionalEmbedding(timestep_embedding_dim)
 

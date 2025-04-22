@@ -5,6 +5,7 @@ import jax
 import jax.numpy as jnp
 import mujoco
 import mujoco.viewer
+from hydrax.alg_base import SamplingBasedController
 from mujoco import mjx
 
 from gpc.envs import TrainingEnv
@@ -14,6 +15,7 @@ from gpc.policy import Policy
 def test_interactive(
     env: TrainingEnv,
     policy: Policy,
+    ctrl: SamplingBasedController,
     mj_data: mujoco.MjData = None,
     inference_timestep: float = 0.1,
     warm_start_level: float = 1.0,
@@ -42,8 +44,8 @@ def test_interactive(
     if mj_data is None:
         mj_data = mujoco.MjData(mj_model)
 
-    # Initialize the action sequence
-    actions = jnp.zeros((task.planning_horizon, task.model.nu))
+    # Initialize the knot sequence
+    actions = jnp.zeros((ctrl.num_knots, task.model.nu))
 
     # Set up an observation function
     mjx_data = mjx.make_data(task.model)
@@ -53,6 +55,8 @@ def test_interactive(
         """Get an observation from the mujoco data."""
         mjx_data = mjx.forward(task.model, mjx_data)  # update sites & sensors
         return env.get_obs(mjx_data)
+
+    params = ctrl.init_params()
 
     # Run the simulation
     with mujoco.viewer.launch_passive(mj_model, mj_data) as viewer:
@@ -72,7 +76,9 @@ def test_interactive(
             inference_start = time.time()
             rng, policy_rng = jax.random.split(rng)
             actions = jit_policy(actions, obs, policy_rng)
-            mj_data.ctrl[:] = actions[0]
+            params = params.replace(mean=actions)
+            U = ctrl.get_action(params, 0.)
+            mj_data.ctrl[:] = U #actions[0]
 
             inference_time = time.time() - inference_start
             obs_time = inference_start - st

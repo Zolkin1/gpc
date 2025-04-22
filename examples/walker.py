@@ -35,7 +35,7 @@ if __name__ == "__main__":
         net = DenoisingCNN(
             action_size=env.task.model.nu,
             observation_size=env.observation_size,
-            horizon=env.task.planning_horizon,
+            knots=ctrl.num_knots,
             feature_dims=[64, 64],
             timestep_embedding_dim=16,
             rngs=nnx.Rngs(0),

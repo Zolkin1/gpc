@@ -40,6 +40,7 @@ def simulate_episode(
 
     Returns:
         y: The observations at each time step.
+        U_knots: The optimal knots for the trajectory.
         U: The optimal actions at each time step.
         U_guess: The initial guess for the optimal actions at each time step.
         J_spc: cost of the best action sequence found by SPC at each time step.
@@ -55,32 +56,48 @@ def simulate_episode(
     psi = ctrl.init_params()
     psi = psi.replace(base_params=psi.base_params.replace(rng=ctrl_rng))
 
+    psi_policy = ctrl.init_params()
+    psi_policy = psi_policy.replace(base_params=psi_policy.base_params.replace(rng=ctrl_rng))
+
     def _scan_fn(
         carry: Tuple[SimulatorState, jax.Array, PACParams], t: int
     ) -> Tuple:
         """Take simulation step, and record all data."""
-        x, U, psi = carry
+        x, U_policy_knots, psi = carry
 
-        # Sample action sequences from the learned policy
+        # ---------- Sample knots from the learned policy ---------- #
         # TODO: consider warm-starting the policy
         y = env._get_observation(x)
         rng, policy_rng, explore_rng = jax.random.split(psi.base_params.rng, 3)
         policy_rngs = jax.random.split(policy_rng, ctrl.num_policy_samples)
         warm_start_level = 0.0
-        Us = jax.vmap(policy.apply, in_axes=(0, None, 0, None))(
-            U, y, policy_rngs, warm_start_level
+        U_policy_knots = jax.vmap(policy.apply, in_axes=(0, None, 0, None))(
+            U_policy_knots, y, policy_rngs, warm_start_level
         )
+        print(f"U_policy_knots shape {U_policy_knots.shape}")
 
+        # ---------- Convert policy knots to action sequences ---------- #
+        U_policy = jax.vmap(ctrl.get_action_sequence_from_policy, in_axes=(0, None))(U_policy_knots, psi.tk)
+        print(f"upolicy shape {U_policy.shape}")
+        # jax.debug.print("U_policy shape {}", U_policy.shape)
+
+        # ---------- Optimize the predictive controller with the policy parameters ---------- #
         # Place the samples into the predictive control parameters so they
         # can be used in the predictive control update
         psi = psi.replace(
-            policy_samples=Us, base_params=psi.base_params.replace(rng=rng)
+            policy_knots=U_policy_knots, base_params=psi.base_params.replace(rng=rng), tk=psi.base_params.tk,
+            mean=psi.base_params.mean,
         )
 
         # Update the action sequence with sampling-based predictive control
         psi, rollouts = ctrl.optimize(x.data, psi)
         U_star = ctrl.get_action_sequence(psi)
 
+        # print(f"ustar shape {U_star.shape}")
+        # jax.debug.print("u shape , U_star shape {}", U_star.shape)
+
+
+        # ---------- Record Keeping ---------- #
         # Record the lowest costs achieved by SPC and the policy
         # TODO: consider logging something more informative
         costs = jnp.sum(rollouts.costs, axis=1)
@@ -92,13 +109,17 @@ def simulate_episode(
         spc_best = costs[spc_best_idx]
         policy_best = costs[policy_best_idx]
 
-        # Step the simulation
+        # ---------- Update simulation ---------- #
+        # Choose the action to use
         if strategy == "policy":
-            u = Us[0, 0]
+            u = U_policy[0, 0:1]
+            print(f"POLICY u shape {u.shape}")
         elif strategy == "best":
             u = U_star[0]
+            print(f"BEST u shape {u.shape}")
         else:
             raise ValueError(f"Unknown strategy: {strategy}")
+        print(f"u shape {u.shape}")
         exploration_noise = exploration_noise_level * jax.random.normal(
             explore_rng, u.shape
         )
@@ -108,18 +129,19 @@ def simulate_episode(
         # to weigh the flow matching loss in the policy training.
         U_guess = psi.base_params.mean
 
-        return (x, Us, psi), (y, U_star, U_guess, spc_best, policy_best, x)
+        return (x, U_policy_knots, psi), (y, psi.mean, U_guess, spc_best, policy_best, x)
 
     rng, u_rng = jax.random.split(rng)
     U = jax.random.normal(
         u_rng,
-        (ctrl.num_policy_samples, env.task.planning_horizon, env.task.model.nu),
+        (ctrl.num_policy_samples, ctrl.num_knots, env.task.model.nu),
     )
-    _, (y, U, U_guess, J_spc, J_policy, states) = jax.lax.scan(
+
+    _, (y, U_knots, U_guess, J_spc, J_policy, states) = jax.lax.scan(
         _scan_fn, (x, U, psi), jnp.arange(env.episode_length)
     )
 
-    return y, U, U_guess, J_spc, J_policy, states
+    return y, U_knots, U_guess, J_spc, J_policy, states
 
 
 def fit_policy(
@@ -287,7 +309,7 @@ def train(  # noqa: PLR0915 this is a long function, don't limit to 50 lines
 
     # Print some information about the training setup
     episode_seconds = env.episode_length * env.task.model.opt.timestep
-    horizon_seconds = env.task.planning_horizon * env.task.dt
+    horizon_seconds = ctrl.plan_horizon
     num_samples = num_policy_samples + ctrl.num_samples
     print("Training with:")
     print(
@@ -297,7 +319,8 @@ def train(  # noqa: PLR0915 this is a long function, don't limit to 50 lines
     (
         print(
             f"  planning horizon: {horizon_seconds} seconds"
-            f" ({env.task.planning_horizon} knots)"
+            f" ({ctrl.num_knots} knots)"
+            f" ({int(ctrl.plan_horizon / ctrl.dt)} simulation steps)"
         ),
     )
     print(
@@ -351,7 +374,7 @@ def train(  # noqa: PLR0915 this is a long function, don't limit to 50 lines
 
         Returns:
             The observations at each time step.
-            The best action sequence at each time step.
+            The optimal knots for the trajectory.
             Average cost of SPC's best action sequence.
             Average cost of the policy's best action sequence.
             Fraction of times the policy generated the best action sequence.
@@ -359,7 +382,7 @@ def train(  # noqa: PLR0915 this is a long function, don't limit to 50 lines
         """
         rngs = jax.random.split(rng, num_envs)
 
-        y, U, U_guess, J_spc, J_policy, states = jax.vmap(
+        y, U_knots, U_guess, J_spc, J_policy, states = jax.vmap(
             simulate_episode, in_axes=(None, None, None, None, 0, None)
         )(env, ctrl, policy, exploration_noise_level, rngs, strategy)
 
@@ -369,7 +392,7 @@ def train(  # noqa: PLR0915 this is a long function, don't limit to 50 lines
         frac = jnp.mean(J_policy < J_spc)
         return (
             y,
-            U,
+            U_knots,
             U_guess,
             jnp.mean(J_spc),
             jnp.mean(J_policy),
@@ -401,15 +424,15 @@ def train(  # noqa: PLR0915 this is a long function, don't limit to 50 lines
         """
         # Flatten across timesteps and initial conditions
         y = observations.reshape(-1, observations.shape[-1])
-        U = actions.reshape(-1, env.task.planning_horizon, env.task.model.nu)
+        U_knots = actions.reshape(-1, ctrl.num_knots, env.task.model.nu)
         U_guess = previous_actions.reshape(
-            -1, env.task.planning_horizon, env.task.model.nu
+            -1, ctrl.num_knots, env.task.model.nu
         )
 
         # Rescale the actions from [u_min, u_max] to [-1, 1]
         mean = (env.task.u_max + env.task.u_min) / 2
         scale = (env.task.u_max - env.task.u_min) / 2
-        U = (U - mean) / scale
+        U_knots = (U_knots - mean) / scale
         U_guess = (U_guess - mean) / scale
 
         # Normalize the observations, updating the running statistics stored
@@ -419,7 +442,7 @@ def train(  # noqa: PLR0915 this is a long function, don't limit to 50 lines
         # Do the regression
         return fit_policy(
             y,
-            U,
+            U_knots,
             U_guess,
             policy.model,
             optimizer,
@@ -435,11 +458,15 @@ def train(  # noqa: PLR0915 this is a long function, don't limit to 50 lines
         policy.model.eval()
         sim_start = time.time()
         rng, episode_rng = jax.random.split(rng)
-        y, U, U_guess, J_spc, J_policy, frac, traj = jit_simulate(
+        y, U_knots, U_guess, J_spc, J_policy, frac, traj = jit_simulate(
             policy, episode_rng
         )
         y.block_until_ready()
         sim_time = time.time() - sim_start
+
+        # jax.debug.print("U_knots shape {}", U_knots.shape)
+        # jax.debug.print("U shape {}", U.shape)
+        # jax.debug.print("U_guess shape {}", U_guess.shape)
 
         # Render the first few trajectories for visualization
         # N.B. this uses CPU mujoco's rendering utils, so we need to do it
@@ -457,7 +484,7 @@ def train(  # noqa: PLR0915 this is a long function, don't limit to 50 lines
         policy.model.train()
         fit_start = time.time()
         rng, fit_rng = jax.random.split(rng)
-        loss = jit_fit(policy, optimizer, y, U, U_guess, fit_rng)
+        loss = jit_fit(policy, optimizer, y, U_knots, U_guess, fit_rng)
         loss.block_until_ready()
         fit_time = time.time() - fit_start
 
