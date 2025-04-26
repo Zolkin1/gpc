@@ -93,7 +93,7 @@ def simulate_episode(
         psi, rollouts = ctrl.optimize(x.data, psi)
         U_star = ctrl.get_action_sequence(psi)
 
-        # print(f"ustar shape {U_star.shape}")
+        print(f"ustar shape {U_star.shape}")
         # jax.debug.print("u shape , U_star shape {}", U_star.shape)
 
 
@@ -111,8 +111,9 @@ def simulate_episode(
 
         # ---------- Update simulation ---------- #
         # Choose the action to use
+        # jax.debug.print("U policy: {}, U best: {}", U_policy[0, 0], U_star[0])
         if strategy == "policy":
-            u = U_policy[0, 0:1]
+            u = U_policy[0, 0:1]    # TODO: Debug this shape!
             print(f"POLICY u shape {u.shape}")
         elif strategy == "best":
             u = U_star[0]
