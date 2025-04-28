@@ -56,9 +56,6 @@ def simulate_episode(
     psi = ctrl.init_params()
     psi = psi.replace(base_params=psi.base_params.replace(rng=ctrl_rng))
 
-    psi_policy = ctrl.init_params()
-    psi_policy = psi_policy.replace(base_params=psi_policy.base_params.replace(rng=ctrl_rng))
-
     def _scan_fn(
         carry: Tuple[SimulatorState, jax.Array, PACParams], t: int
     ) -> Tuple:
@@ -78,6 +75,8 @@ def simulate_episode(
 
         # ---------- Convert policy knots to action sequences ---------- #
         U_policy = jax.vmap(ctrl.get_action_sequence_from_policy, in_axes=(0, None))(U_policy_knots, psi.tk)
+        U_policy = jnp.expand_dims(U_policy, axis=2)    # TODO: Why do I need this?
+
         print(f"upolicy shape {U_policy.shape}")
         # jax.debug.print("U_policy shape {}", U_policy.shape)
 
@@ -113,7 +112,7 @@ def simulate_episode(
         # Choose the action to use
         # jax.debug.print("U policy: {}, U best: {}", U_policy[0, 0], U_star[0])
         if strategy == "policy":
-            u = U_policy[0, 0:1]    # TODO: Debug this shape!
+            u = U_policy[0, 0]
             print(f"POLICY u shape {u.shape}")
         elif strategy == "best":
             u = U_star[0]

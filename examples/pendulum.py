@@ -45,7 +45,7 @@ if __name__ == "__main__":
             env,
             ctrl,
             net,
-            num_policy_samples=2,
+            num_policy_samples=3,
             log_dir="/tmp/gpc_pendulum",
             num_epochs=10,
             num_iters=10,
