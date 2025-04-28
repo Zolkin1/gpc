@@ -31,7 +31,7 @@ if __name__ == "__main__":
 
     if args.task == "train":
         # Train the policy and save it to a file
-        ctrl = PredictiveSampling(env.task, num_samples=16, noise_level=0.3)
+        ctrl = PredictiveSampling(env.task, num_samples=16, noise_level=0.3, num_knots=4, plan_horizon=0.6)
         net = DenoisingCNN(
             action_size=env.task.model.nu,
             observation_size=env.observation_size,
@@ -55,11 +55,10 @@ if __name__ == "__main__":
 
     elif args.task == "test":
         # Load the policy from a file and test it interactively
+        ctrl = PredictiveSampling(env.task, num_samples=16, noise_level=0.3)
         print(f"Loading policy from {save_file}")
         policy = Policy.load(save_file)
-        test_interactive(
-            env, policy, inference_timestep=0.01, warm_start_level=1.0
-        )
+        test_interactive(env, policy, ctrl,)
 
     elif args.task == "sample":
         # Use the policy to bootstrap sampling-based MPC

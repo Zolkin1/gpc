@@ -84,7 +84,7 @@ class PolicyAugmentedController(SamplingBasedController):
     ) -> PACParams:
         """Update the policy parameters according to the base controller."""
         base_params = self.base_ctrl.update_params(params.base_params, rollouts)
-        return params.replace(base_params=base_params)
+        return params.replace(base_params=base_params, mean=base_params.mean)
 
     def get_action(self, params: PACParams, t: float) -> jax.Array:
         """Get the action from the base controller at a given time."""
@@ -95,18 +95,18 @@ class PolicyAugmentedController(SamplingBasedController):
         print(f"params mean shape {params.mean.shape}")
         print(f"params mean indexed shape {params.mean[None, ...].shape}")
         timesteps = jnp.linspace(0.0, self.plan_horizon, int(self.plan_horizon/self.dt))
-        return jax.vmap(self.get_action, in_axes=(None, 0))(params, timesteps)  # TODO: Make sure this returns a model.nu dimension
+        return jax.vmap(self.get_action, in_axes=(None, 0))(params, timesteps)
 
-    def get_action_from_policy(self, knots: jax.Array, tk: jax.Array, t: jax.Array) -> jax.Array:
-        """Get the action from the policy at a given time."""
-        print(f"t shape {t.shape}")
-        print(f"tk shape {tk.shape}")
-        print(f"interp shape result {self.interp_func(t, tk, knots).shape}")
-        u = self.interp_func(t, tk, knots)[0, 0]  # (nu,)
-        return u
-
-    def get_action_sequence_from_policy(self, knots: jax.Array, tk: jax.Array) -> jax.Array:
-        print(f"knots shape {knots.shape}")
-        print(f"knots indexed shape {knots[None, ...].shape}")
-        timesteps = jnp.linspace(0.0, self.plan_horizon, int(self.plan_horizon/self.dt))
-        return jax.vmap(self.get_action_from_policy, in_axes=(None, None, 0))(knots[None, ...], tk, timesteps)
+    # def get_action_from_policy(self, knots: jax.Array, tk: jax.Array, t: jax.Array) -> jax.Array:
+    #     """Get the action from the policy at a given time."""
+    #     print(f"t shape {t.shape}")
+    #     print(f"tk shape {tk.shape}")
+    #     print(f"interp shape result {self.interp_func(t, tk, knots).shape}")
+    #     u = self.interp_func(t, tk, knots)[0, 0]  # (nu,)
+    #     return u
+    #
+    # def get_action_sequence_from_policy(self, knots: jax.Array, tk: jax.Array) -> jax.Array:
+    #     print(f"knots shape {knots.shape}")
+    #     print(f"knots indexed shape {knots[None, ...].shape}")
+    #     timesteps = jnp.linspace(0.0, self.plan_horizon, int(self.plan_horizon/self.dt))
+    #     return jax.vmap(self.get_action_from_policy, in_axes=(None, None, 0))(knots[None, ...], tk, timesteps)

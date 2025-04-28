@@ -51,17 +51,17 @@ if __name__ == "__main__":
             num_iters=10,
             num_envs=128,
             num_videos=2,
-            strategy="policy",
+            strategy="best"
         )
         policy.save(save_file)
         print(f"Saved policy to {save_file}")
 
     elif args.task == "test":
         # Load the policy from a file and test it interactively
-        ctrl_temp = PredictiveSampling(env.task, num_samples=8, noise_level=0.1)
+        ctrl = PredictiveSampling(env.task, num_samples=8, noise_level=0.1)
         print(f"Loading policy from {save_file}")
         policy = Policy.load(save_file)
-        test_interactive(env, policy, ctrl_temp)
+        test_interactive(env, policy, ctrl)
 
     elif args.task == "sample":
         # Use the policy to bootstrap sampling-based MPC

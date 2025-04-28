@@ -54,7 +54,7 @@ class DenoisingMLP(nnx.Module):
         Args:
             action_size: Dimension of the actions (u).
             observation_size: Dimension of the observations (y).
-            knots: Number of knots in the action sequence.
+            knots: Number of knots in the horizon.
             hidden_layers: Sizes of all hidden layers.
             rngs: Random number generators for initialization.
         """
@@ -216,7 +216,7 @@ class DenoisingCNN(nnx.Module):
         Args:
             action_size: Dimension of the actions (u).
             observation_size: Dimension of the observations (y).
-            knots: Number of steps in the action sequence (U = [u0, u1, ...]).
+            knots: Number of knots in the horizon
             feature_dims: List of feature dimensions.
             rngs: Random number generators for initialization.
             kernel_size: Size of the convolutional kernel.

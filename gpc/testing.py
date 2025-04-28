@@ -46,6 +46,7 @@ def test_interactive(
 
     # Initialize the knot sequence
     actions = jnp.zeros((ctrl.num_knots, task.model.nu))
+    eval_time = jnp.zeros((1))
 
     # Set up an observation function
     mjx_data = mjx.make_data(task.model)
@@ -77,8 +78,8 @@ def test_interactive(
             rng, policy_rng = jax.random.split(rng)
             actions = jit_policy(actions, obs, policy_rng)
             params = params.replace(mean=actions)
-            U = ctrl.get_action(params, 0.)
-            mj_data.ctrl[:] = U #actions[0]
+            U = ctrl.get_action(params, eval_time)
+            mj_data.ctrl[:] = U
 
             inference_time = time.time() - inference_start
             obs_time = inference_start - st

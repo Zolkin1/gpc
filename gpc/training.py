@@ -71,14 +71,6 @@ def simulate_episode(
         U_policy_knots = jax.vmap(policy.apply, in_axes=(0, None, 0, None))(
             U_policy_knots, y, policy_rngs, warm_start_level
         )
-        print(f"U_policy_knots shape {U_policy_knots.shape}")
-
-        # ---------- Convert policy knots to action sequences ---------- #
-        U_policy = jax.vmap(ctrl.get_action_sequence_from_policy, in_axes=(0, None))(U_policy_knots, psi.tk)
-        U_policy = jnp.expand_dims(U_policy, axis=2)    # TODO: Why do I need this?
-
-        print(f"upolicy shape {U_policy.shape}")
-        # jax.debug.print("U_policy shape {}", U_policy.shape)
 
         # ---------- Optimize the predictive controller with the policy parameters ---------- #
         # Place the samples into the predictive control parameters so they
@@ -88,13 +80,13 @@ def simulate_episode(
             mean=psi.base_params.mean,
         )
 
+        policy_psi = psi.replace(policy_knots=U_policy_knots, base_params=psi.base_params.replace(rng=rng, mean=U_policy_knots),
+                                 tk=psi.base_params.tk, mean=U_policy_knots,)
+
         # Update the action sequence with sampling-based predictive control
         psi, rollouts = ctrl.optimize(x.data, psi)
-        U_star = ctrl.get_action_sequence(psi)
-
-        print(f"ustar shape {U_star.shape}")
-        # jax.debug.print("u shape , U_star shape {}", U_star.shape)
-
+        U_star = ctrl.get_action_sequence(psi)                  # Convert optimized knots to action sequences
+        U_policy = ctrl.get_action_sequence(policy_psi)         # Convert policy knots to action sequences
 
         # ---------- Record Keeping ---------- #
         # Record the lowest costs achieved by SPC and the policy
@@ -102,24 +94,20 @@ def simulate_episode(
         costs = jnp.sum(rollouts.costs, axis=1)
         spc_best_idx = jnp.argmin(costs[: -ctrl.num_policy_samples])
         policy_best_idx = (
-            jnp.argmin(costs[ctrl.num_policy_samples :])
-            + ctrl.num_policy_samples
+            jnp.argmin(costs[-ctrl.num_policy_samples :])
+            + costs.shape[0] - ctrl.num_policy_samples
         )
         spc_best = costs[spc_best_idx]
         policy_best = costs[policy_best_idx]
 
         # ---------- Update simulation ---------- #
         # Choose the action to use
-        # jax.debug.print("U policy: {}, U best: {}", U_policy[0, 0], U_star[0])
         if strategy == "policy":
-            u = U_policy[0, 0]
-            print(f"POLICY u shape {u.shape}")
+            u = U_policy[0]
         elif strategy == "best":
-            u = U_star[0]
-            print(f"BEST u shape {u.shape}")
+            u = U_star[0:1]
         else:
             raise ValueError(f"Unknown strategy: {strategy}")
-        print(f"u shape {u.shape}")
         exploration_noise = exploration_noise_level * jax.random.normal(
             explore_rng, u.shape
         )
@@ -127,7 +115,7 @@ def simulate_episode(
 
         # Record the initial guess for the optimal action sequence. This is used
         # to weigh the flow matching loss in the policy training.
-        U_guess = psi.base_params.mean
+        U_guess = psi.mean
 
         return (x, U_policy_knots, psi), (y, psi.mean, U_guess, spc_best, policy_best, x)
 
