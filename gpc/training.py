@@ -61,6 +61,8 @@ def simulate_episode(
     ) -> Tuple:
         """Take simulation step, and record all data."""
         x, U_policy_knots, psi = carry
+        # print(f"psi mean shape: {psi.mean.shape}")
+        # print(f"psi base mean shape: {psi.base_params.mean.shape}")
 
         # ---------- Sample knots from the learned policy ---------- #
         # TODO: consider warm-starting the policy
@@ -68,6 +70,7 @@ def simulate_episode(
         rng, policy_rng, explore_rng = jax.random.split(psi.base_params.rng, 3)
         policy_rngs = jax.random.split(policy_rng, ctrl.num_policy_samples)
         warm_start_level = 0.0
+        # print(f"y shape: {y.shape}")
         U_policy_knots = jax.vmap(policy.apply, in_axes=(0, None, 0, None))(
             U_policy_knots, y, policy_rngs, warm_start_level
         )
@@ -79,14 +82,25 @@ def simulate_episode(
             policy_knots=U_policy_knots, base_params=psi.base_params.replace(rng=rng), tk=psi.base_params.tk,
             mean=psi.base_params.mean,
         )
-
-        policy_psi = psi.replace(policy_knots=U_policy_knots, base_params=psi.base_params.replace(rng=rng, mean=U_policy_knots),
-                                 tk=psi.base_params.tk, mean=U_policy_knots,)
+        # print(f"psi mean shape (after replace): {psi.mean.shape}")
+        # print(f"psi base mean shape (after replace): {psi.base_params.mean.shape}")
 
         # Update the action sequence with sampling-based predictive control
         psi, rollouts = ctrl.optimize(x.data, psi)
         U_star = ctrl.get_action_sequence(psi)                  # Convert optimized knots to action sequences
-        U_policy = ctrl.get_action_sequence(policy_psi)         # Convert policy knots to action sequences
+
+        # Get the actions from the policy
+        def _get_policy_action_sequence(knots: jax.Array) -> jax.Array:
+            policy_psi = psi.replace(policy_knots=knots,
+                                     base_params=psi.base_params.replace(rng=rng, mean=knots),
+                                     tk=psi.base_params.tk, mean=knots, )
+            U_policy = ctrl.get_action_sequence(policy_psi)
+            return U_policy
+
+        U_policy = jax.vmap(_get_policy_action_sequence, in_axes=(0))(U_policy_knots)         # Convert policy knots to action sequences
+
+        # U_policy should be (num_policy_sample, H, nu)
+        # U_star should be (H, nu)
 
         # ---------- Record Keeping ---------- #
         # Record the lowest costs achieved by SPC and the policy
@@ -103,11 +117,14 @@ def simulate_episode(
         # ---------- Update simulation ---------- #
         # Choose the action to use
         if strategy == "policy":
-            u = U_policy[0]
+            u = U_policy[0, 0]      # TODO: Fix this. On policy update for the pendulum appears to fail
         elif strategy == "best":
-            u = U_star[0:1]
+            u = U_star[0]
         else:
             raise ValueError(f"Unknown strategy: {strategy}")
+        print(f"u policy shape: {U_policy.shape}")
+        print(f"u opt shape: {U_star.shape}")
+        print(f"u shape: {u.shape}")
         exploration_noise = exploration_noise_level * jax.random.normal(
             explore_rng, u.shape
         )
@@ -115,7 +132,7 @@ def simulate_episode(
 
         # Record the initial guess for the optimal action sequence. This is used
         # to weigh the flow matching loss in the policy training.
-        U_guess = psi.mean
+        U_guess = psi.base_params.mean
 
         return (x, U_policy_knots, psi), (y, psi.mean, U_guess, spc_best, policy_best, x)
 
@@ -124,7 +141,7 @@ def simulate_episode(
         u_rng,
         (ctrl.num_policy_samples, ctrl.num_knots, env.task.model.nu),
     )
-
+    # print(f"U shape: {U.shape}")
     _, (y, U_knots, U_guess, J_spc, J_policy, states) = jax.lax.scan(
         _scan_fn, (x, U, psi), jnp.arange(env.episode_length)
     )

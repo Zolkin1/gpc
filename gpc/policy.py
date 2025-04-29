@@ -77,6 +77,8 @@ class Policy:
             The updated action sequence
         """
         # Normalize the observation, but don't update the stored statistics
+        print(f"normalizer mean shape: {self.normalizer.mean.shape}")
+        print(f"y shape shape: {y.shape}")
         y = self.normalizer(y, use_running_average=True)
 
         # Set the initial sample

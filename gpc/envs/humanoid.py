@@ -41,9 +41,10 @@ class HumanoidEnv(TrainingEnv):
         """Observe the full state, regularized to be agnostic to orientation."""
         height = self.task._get_torso_height(data)[None]
         orientation = self.task._get_torso_orientation(data)  # upright rotation
+        print(f"obs size: {jnp.concatenate([height, orientation, data.qpos[7:], data.qvel]).shape}")
         return jnp.concatenate([height, orientation, data.qpos[7:], data.qvel])
 
     @property
     def observation_size(self) -> int:
         """The size of the observations."""
-        return 56
+        return 68 #56

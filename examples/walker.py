@@ -49,13 +49,14 @@ if __name__ == "__main__":
             num_iters=20,
             num_envs=128,
             num_epochs=10,
+            strategy="best",
         )
         policy.save(save_file)
         print(f"Saved policy to {save_file}")
 
     elif args.task == "test":
         # Load the policy from a file and test it interactively
-        ctrl = PredictiveSampling(env.task, num_samples=16, noise_level=0.3)
+        ctrl = PredictiveSampling(env.task, num_samples=16, noise_level=0.3, num_knots=4, plan_horizon=0.6)
         print(f"Loading policy from {save_file}")
         policy = Policy.load(save_file)
         test_interactive(env, policy, ctrl,)

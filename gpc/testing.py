@@ -80,6 +80,7 @@ def test_interactive(
             params = params.replace(mean=actions)
             U = ctrl.get_action(params, eval_time)
             mj_data.ctrl[:] = U
+            print(f"U: {U}, actions: {actions}")
 
             inference_time = time.time() - inference_start
             obs_time = inference_start - st

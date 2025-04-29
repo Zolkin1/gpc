@@ -86,15 +86,18 @@ class PolicyAugmentedController(SamplingBasedController):
         base_params = self.base_ctrl.update_params(params.base_params, rollouts)
         return params.replace(base_params=base_params, mean=base_params.mean)
 
-    def get_action(self, params: PACParams, t: float) -> jax.Array:
+    def get_action(self, params: PACParams, t: jax.Array) -> jax.Array:
         """Get the action from the base controller at a given time."""
-        return self.base_ctrl.get_action(params.base_params, t)
+        # print(f"t shape {t.shape}")
+        t_arr = t[None]
+        # print(f"t_arr shape {t_arr.shape}")
+        return self.base_ctrl.get_action(params.base_params, t_arr)
 
     def get_action_sequence(self, params: PACParams) -> jax.Array:
         """Get the action sequence from the controller."""
-        print(f"params mean shape {params.mean.shape}")
-        print(f"params mean indexed shape {params.mean[None, ...].shape}")
         timesteps = jnp.linspace(0.0, self.plan_horizon, int(self.plan_horizon/self.dt))
+        # print(f"action shape {self.get_action(params, timesteps[0:1]).shape}, knots shape {params.base_params.mean[None, ...].shape}, "
+        #       f"interp shape result {self.interp_func(timesteps[0:1], params.base_params.tk, params.base_params.mean[None, ...]).shape}")
         return jax.vmap(self.get_action, in_axes=(None, 0))(params, timesteps)
 
     # def get_action_from_policy(self, knots: jax.Array, tk: jax.Array, t: jax.Array) -> jax.Array:
