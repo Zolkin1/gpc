@@ -61,8 +61,6 @@ def simulate_episode(
     ) -> Tuple:
         """Take simulation step, and record all data."""
         x, U_policy_knots, psi = carry
-        # print(f"psi mean shape: {psi.mean.shape}")
-        # print(f"psi base mean shape: {psi.base_params.mean.shape}")
 
         # ---------- Sample knots from the learned policy ---------- #
         # TODO: consider warm-starting the policy
@@ -82,25 +80,11 @@ def simulate_episode(
             policy_knots=U_policy_knots, base_params=psi.base_params.replace(rng=rng), tk=psi.base_params.tk,
             mean=psi.base_params.mean,
         )
-        # print(f"psi mean shape (after replace): {psi.mean.shape}")
-        # print(f"psi base mean shape (after replace): {psi.base_params.mean.shape}")
 
         # Update the action sequence with sampling-based predictive control
         psi, rollouts = ctrl.optimize(x.data, psi)
-        U_star = ctrl.get_action_sequence(psi)                  # Convert optimized knots to action sequences
-
-        # Get the actions from the policy
-        def _get_policy_action_sequence(knots: jax.Array) -> jax.Array:
-            policy_psi = psi.replace(policy_knots=knots,
-                                     base_params=psi.base_params.replace(rng=rng, mean=knots),
-                                     tk=psi.base_params.tk, mean=knots, )
-            U_policy = ctrl.get_action_sequence(policy_psi)
-            return U_policy
-
-        U_policy = jax.vmap(_get_policy_action_sequence, in_axes=(0))(U_policy_knots)         # Convert policy knots to action sequences
-
-        # U_policy should be (num_policy_sample, H, nu)
-        # U_star should be (H, nu)
+        psi = psi.replace(policy_knots=U_policy_knots)
+        U_star, U_policy = ctrl.get_action_sequences(psi)                  # Convert optimized knots to action sequences
 
         # ---------- Record Keeping ---------- #
         # Record the lowest costs achieved by SPC and the policy
@@ -122,9 +106,9 @@ def simulate_episode(
             u = U_star[0]
         else:
             raise ValueError(f"Unknown strategy: {strategy}")
-        print(f"u policy shape: {U_policy.shape}")
-        print(f"u opt shape: {U_star.shape}")
-        print(f"u shape: {u.shape}")
+        # print(f"u policy shape: {U_policy.shape}")
+        # print(f"u opt shape: {U_star.shape}")
+        # print(f"u shape: {u.shape}")
         exploration_noise = exploration_noise_level * jax.random.normal(
             explore_rng, u.shape
         )
@@ -296,7 +280,7 @@ def train(  # noqa: PLR0915 this is a long function, don't limit to 50 lines
         video_fps: Frames per second for rendered videos.
         strategy: The strategy for choosing a control action to advance the
                   simulation during the data collection phase. "policy" uses the
-                  first policy sample, while "best" agregates all samples.
+                  first policy sample, while "best" aggregates all samples.
 
     """
     rng = jax.random.key(0)

@@ -50,7 +50,7 @@ if __name__ == "__main__":
             log_dir="/tmp/gpc_crane",
             num_iters=10,
             num_envs=512,
-            num_videos=4,
+            num_videos=0,#4,
             batch_size=1024,
             num_epochs=20,
             checkpoint_every=5,

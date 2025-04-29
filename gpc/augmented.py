@@ -86,30 +86,13 @@ class PolicyAugmentedController(SamplingBasedController):
         base_params = self.base_ctrl.update_params(params.base_params, rollouts)
         return params.replace(base_params=base_params, mean=base_params.mean)
 
-    def get_action(self, params: PACParams, t: jax.Array) -> jax.Array:
-        """Get the action from the base controller at a given time."""
-        # print(f"t shape {t.shape}")
-        t_arr = t[None]
-        # print(f"t_arr shape {t_arr.shape}")
-        return self.base_ctrl.get_action(params.base_params, t_arr)
-
-    def get_action_sequence(self, params: PACParams) -> jax.Array:
+    def get_action_sequences(self, params: PACParams) -> Tuple[jax.Array, jax.Array]:
         """Get the action sequence from the controller."""
-        timesteps = jnp.linspace(0.0, self.plan_horizon, int(self.plan_horizon/self.dt))
-        # print(f"action shape {self.get_action(params, timesteps[0:1]).shape}, knots shape {params.base_params.mean[None, ...].shape}, "
-        #       f"interp shape result {self.interp_func(timesteps[0:1], params.base_params.tk, params.base_params.mean[None, ...]).shape}")
-        return jax.vmap(self.get_action, in_axes=(None, 0))(params, timesteps)
+        timesteps = jnp.linspace(params.tk[0], params.tk[-1], self.ctrl_steps) #0.0, self.plan_horizon, int(self.plan_horizon/self.dt))
 
-    # def get_action_from_policy(self, knots: jax.Array, tk: jax.Array, t: jax.Array) -> jax.Array:
-    #     """Get the action from the policy at a given time."""
-    #     print(f"t shape {t.shape}")
-    #     print(f"tk shape {tk.shape}")
-    #     print(f"interp shape result {self.interp_func(t, tk, knots).shape}")
-    #     u = self.interp_func(t, tk, knots)[0, 0]  # (nu,)
-    #     return u
-    #
-    # def get_action_sequence_from_policy(self, knots: jax.Array, tk: jax.Array) -> jax.Array:
-    #     print(f"knots shape {knots.shape}")
-    #     print(f"knots indexed shape {knots[None, ...].shape}")
-    #     timesteps = jnp.linspace(0.0, self.plan_horizon, int(self.plan_horizon/self.dt))
-    #     return jax.vmap(self.get_action_from_policy, in_axes=(None, None, 0))(knots[None, ...], tk, timesteps)
+        opt_controls = self.interp_func(timesteps, params.base_params.tk, params.base_params.mean[None, ...])
+        policy_controls = self.interp_func(timesteps, params.tk, params.policy_knots)
+
+        print(f"opt_controls shape {opt_controls.shape}, policy_controls shape {policy_controls.shape}")
+
+        return opt_controls[0], policy_controls
