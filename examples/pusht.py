@@ -33,11 +33,11 @@ if __name__ == "__main__":
 
     if args.task == "train":
         # Train the policy and save it to a file
-        ctrl = PredictiveSampling(env.task, num_samples=128, noise_level=0.4)
+        ctrl = PredictiveSampling(env.task, num_samples=128, noise_level=0.4, plan_horizon=0.5, num_knots=6)
         net = DenoisingCNN(
             action_size=env.task.model.nu,
             observation_size=env.observation_size,
-            horizon=env.task.planning_horizon,
+            knots=ctrl.num_knots,
             feature_dims=[32, 32, 32],
             timestep_embedding_dim=8,
             rngs=nnx.Rngs(0),
@@ -58,11 +58,12 @@ if __name__ == "__main__":
 
     elif args.task == "test":
         # Load the policy from a file and test it interactively
+        ctrl = PredictiveSampling(env.task, num_samples=128, noise_level=0.4)
         print(f"Loading policy from {save_file}")
         policy = Policy.load(save_file)
         mj_data = mujoco.MjData(env.task.mj_model)
         mj_data.qpos[:] = [0.1, 0.1, 2.0, 0.0, 0.0]  # set the initial state
-        test_interactive(env, policy, mj_data)
+        test_interactive(env, policy, ctrl, mj_data)
 
     elif args.task == "sample":
         # Use the policy to bootstrap sampling-based MPC

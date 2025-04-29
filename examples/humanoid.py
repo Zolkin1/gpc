@@ -38,12 +38,12 @@ if __name__ == "__main__":
             num_samples=32,
             noise_level=1.0,
             temperature=0.1,
-            num_randomizations=2,
+            num_randomizations=1,
         )
         net = DenoisingCNN(
             action_size=env.task.model.nu,
             observation_size=env.observation_size,
-            horizon=env.task.planning_horizon,
+            knots=ctrl.num_knots,
             feature_dims=(128,) * 3,
             timestep_embedding_dim=64,
             rngs=nnx.Rngs(0),
@@ -59,16 +59,23 @@ if __name__ == "__main__":
             num_envs=128,
             num_videos=2,
             checkpoint_every=1,
-            strategy="best",
+            strategy="policy",
         )
         policy.save(save_file)
         print(f"Saved policy to {save_file}")
 
     elif args.task == "test":
         # Load the policy from a file and test it interactively
+        ctrl = MPPI(
+            env.task,
+            num_samples=32,
+            noise_level=1.0,
+            temperature=0.1,
+            num_randomizations=1,
+        )
         print(f"Loading policy from {save_file}")
         policy = Policy.load(save_file)
-        test_interactive(env, policy)
+        test_interactive(env, policy, ctrl)
 
     elif args.task == "sample":
         # Use the policy to bootstrap sampling-based MPC

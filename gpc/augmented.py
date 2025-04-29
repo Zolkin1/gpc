@@ -3,11 +3,10 @@ from typing import Any, Tuple
 import jax
 import jax.numpy as jnp
 from flax.struct import dataclass
-from hydrax.alg_base import SamplingBasedController, Trajectory
-
+from hydrax.alg_base import SamplingBasedController, Trajectory, SamplingParams
 
 @dataclass
-class PACParams:
+class PACParams(SamplingParams):
     """Parameters for the policy-augmented controller.
 
     Attributes:
@@ -17,9 +16,10 @@ class PACParams:
     """
 
     base_params: Any
-    policy_samples: jax.Array
+    policy_knots: Any
+    tk: jax.Array
+    mean: jax.Array
     rng: jax.Array
-
 
 class PolicyAugmentedController(SamplingBasedController):
     """An SPC generalization where samples are augmented by a learned policy."""
@@ -41,6 +41,8 @@ class PolicyAugmentedController(SamplingBasedController):
             base_ctrl.task,
             base_ctrl.num_randomizations,
             base_ctrl.risk_strategy,
+            num_knots=base_ctrl.num_knots,
+            plan_horizon=base_ctrl.plan_horizon,
             seed=0,
         )
 
@@ -52,26 +54,28 @@ class PolicyAugmentedController(SamplingBasedController):
         policy_samples = jnp.zeros(
             (
                 self.num_policy_samples,
-                self.task.planning_horizon,
+                self.num_knots,
                 self.task.model.nu,
             )
         )
         return PACParams(
             base_params=base_params,
-            policy_samples=policy_samples,
-            rng=our_rng,
+            policy_knots=policy_samples,
+            tk=base_params.tk,
+            mean=base_params.mean,
+            rng=base_params.rng,
         )
 
-    def sample_controls(self, params: PACParams) -> Tuple[jax.Array, PACParams]:
+    def sample_knots(self, params: PACParams) -> Tuple[jax.Array, PACParams]:
         """Sample control sequences from the base controller and the policy."""
         # Samples from the base controller
-        base_samples, base_params = self.base_ctrl.sample_controls(
+        base_samples, base_params = self.base_ctrl.sample_knots(
             params.base_params
         )
 
-        # Include samples from the policy. Assumes that thes have already been
-        # generated and stored in params.policy_samples.
-        samples = jnp.append(base_samples, params.policy_samples, axis=0)
+        # Include samples from the policy. Assumes that these have already been
+        # generated and stored in params.policy_knots.
+        samples = jnp.append(base_samples, params.policy_knots, axis=0)
 
         return samples, params.replace(base_params=base_params)
 
@@ -80,13 +84,15 @@ class PolicyAugmentedController(SamplingBasedController):
     ) -> PACParams:
         """Update the policy parameters according to the base controller."""
         base_params = self.base_ctrl.update_params(params.base_params, rollouts)
-        return params.replace(base_params=base_params)
+        return params.replace(base_params=base_params, mean=base_params.mean)
 
-    def get_action(self, params: PACParams, t: float) -> jax.Array:
-        """Get the action from the base controller at a given time."""
-        return self.base_ctrl.get_action(params.base_params, t)
-
-    def get_action_sequence(self, params: PACParams) -> jax.Array:
+    def get_action_sequences(self, params: PACParams) -> Tuple[jax.Array, jax.Array]:
         """Get the action sequence from the controller."""
-        timesteps = jnp.arange(self.task.planning_horizon) * self.task.dt
-        return jax.vmap(self.get_action, in_axes=(None, 0))(params, timesteps)
+        timesteps = jnp.linspace(params.tk[0], params.tk[-1], self.ctrl_steps) #0.0, self.plan_horizon, int(self.plan_horizon/self.dt))
+
+        opt_controls = self.interp_func(timesteps, params.base_params.tk, params.base_params.mean[None, ...])
+        policy_controls = self.interp_func(timesteps, params.tk, params.policy_knots)
+
+        # print(f"opt_controls shape {opt_controls.shape}, policy_controls shape {policy_controls.shape}")
+
+        return opt_controls[0], policy_controls

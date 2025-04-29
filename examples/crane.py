@@ -37,7 +37,7 @@ if __name__ == "__main__":
         net = DenoisingCNN(
             action_size=env.task.model.nu,
             observation_size=env.observation_size,
-            horizon=env.task.planning_horizon,
+            knots=ctrl.num_knots,
             feature_dims=[64, 64],
             timestep_embedding_dim=16,
             rngs=nnx.Rngs(0),
@@ -50,7 +50,7 @@ if __name__ == "__main__":
             log_dir="/tmp/gpc_crane",
             num_iters=10,
             num_envs=512,
-            num_videos=4,
+            num_videos=0,#4,
             batch_size=1024,
             num_epochs=20,
             checkpoint_every=5,
@@ -61,9 +61,10 @@ if __name__ == "__main__":
 
     elif args.task == "test":
         # Load the policy from a file and test it interactively
+        ctrl = PredictiveSampling(env.task, num_samples=4, noise_level=0.05)
         print(f"Loading policy from {save_file}")
         policy = Policy.load(save_file)
-        test_interactive(env, policy)
+        test_interactive(env, policy, ctrl)
 
     elif args.task == "sample":
         # Use the policy to bootstrap sampling-based MPC
