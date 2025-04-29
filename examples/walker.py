@@ -49,7 +49,7 @@ if __name__ == "__main__":
             num_iters=20,
             num_envs=128,
             num_epochs=10,
-            strategy="best",
+            strategy="policy",
         )
         policy.save(save_file)
         print(f"Saved policy to {save_file}")

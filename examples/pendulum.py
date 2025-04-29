@@ -48,7 +48,7 @@ if __name__ == "__main__":
             num_policy_samples=3,
             log_dir="/tmp/gpc_pendulum",
             num_epochs=10,
-            num_iters=10,
+            num_iters=30,
             num_envs=128,
             num_videos=0,
             strategy="policy"

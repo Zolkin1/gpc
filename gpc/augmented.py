@@ -93,6 +93,6 @@ class PolicyAugmentedController(SamplingBasedController):
         opt_controls = self.interp_func(timesteps, params.base_params.tk, params.base_params.mean[None, ...])
         policy_controls = self.interp_func(timesteps, params.tk, params.policy_knots)
 
-        print(f"opt_controls shape {opt_controls.shape}, policy_controls shape {policy_controls.shape}")
+        # print(f"opt_controls shape {opt_controls.shape}, policy_controls shape {policy_controls.shape}")
 
         return opt_controls[0], policy_controls
