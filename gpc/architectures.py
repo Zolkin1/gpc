@@ -77,6 +77,34 @@ class DenoisingMLP(nnx.Module):
         x = self.mlp(x)
         return x.reshape(batches + (self.knots, self.action_size))
 
+class ValueMLP(nnx.Module):
+    """Simple MLP for value function approximation."""
+    def __init__(
+        self,
+        observation_size: int,
+        hidden_layers: Sequence[int],
+        rngs: nnx.Rngs,
+    ):
+        """Initialize the network.
+
+        Args:
+            observation_size: Dimension of the observations (y).
+            hidden_layers: Sizes of all hidden layers.
+            rngs: Random number generators for initialization.
+        """
+        self.observation_size = observation_size
+        self.hidden_layers = hidden_layers
+
+        input_size = observation_size
+        output_size = 1
+        self.mlp = MLP(
+            [input_size] + list(hidden_layers) + [output_size], rngs=rngs
+        )
+
+    def __call__(self, y: jax.Array) -> jax.Array:
+        """Forward pass through the network."""
+        x = self.mlp(y)
+        return x
 
 class PositionalEmbedding(nnx.Module):
     """A simple sinusoidal positional embedding layer."""

@@ -1,19 +1,23 @@
+import os
+
 import evosax
 
 from hydrax.algs import Evosax, PredictiveSampling, MPPI, CEM
+from flax import nnx
 
 from gpc.envs import PendulumEnv
+from gpc.architectures import ValueMLP
 from gpc.training import train
-from gpc.value_learning.value_baseline import compute_baseline, parse_value_data
+from gpc.value_learning.value_baseline import compute_baseline, parse_value_data, extract_data, fit_value_function, value_train
 
 if __name__ == "__main__":
     horizon = 1.0
     knots = int(horizon * 10)
     iters = 1 #5 #1
 
-    num_compute = 1000
+    num_compute = 100 #1000
 
-    filename = "data/value_data_2.pkl"
+    filename = os.getcwd() + "/gpc/value_learning/data/value_data_2.pkl"
 
     env = PendulumEnv(episode_length=200)
     ctrl = Evosax(env.task,
@@ -24,8 +28,17 @@ if __name__ == "__main__":
                   num_knots=knots,
                   iterations=iters,
                   spline_type="zero")
-    compute_baseline(filename, ctrl, env, num_compute)
-    parse_value_data(filename)
+    # compute_baseline(filename, ctrl, env, num_compute)
+    # parse_value_data(filename)
+    # J_star, qpos, qvel = extract_data(filename)
+    # fitted_model = fit_value_function(env=env, J_star=J_star, qpos=qpos, qvel=qvel)
+
+    net = ValueMLP(
+        observation_size=env.observation_size,
+        hidden_layers=[32, 32],
+        rngs=nnx.Rngs(0),
+    )
+    value_train(env, net, filename)
 
     # ctrl_ps = PredictiveSampling(env.task,
     #               num_samples=256,
