@@ -13,7 +13,7 @@ from hydrax.alg_base import SamplingBasedController, Trajectory
 from mujoco import mjx
 from tensorboardX import SummaryWriter
 
-from gpc.envs import TrainingEnv
+from gpc.envs import TrainingEnv, SimulatorState
 
 
 # Run a very fine traj opt with lots of samples and iterations.
@@ -29,6 +29,20 @@ def compute_value(x: mjx.Data, ctrl: SamplingBasedController, params: Any) -> (
 def compute_baseline(filename: str, ctrl: SamplingBasedController, env: TrainingEnv, num_compute: int) -> jax.Array:
     """Compute the value function baseline for a given controller."""
 
+    def _single_compute(x: SimulatorState, ctrl: SamplingBasedController, params: Any, key: jax.Array) -> None:
+        """Performs the computation for a single state."""
+        x = x.replace(data=env.reset(x.data, key))
+
+        params, rollouts = compute_value(x.data, ctrl, params)
+
+        min_cost_idx = jnp.argmin(jnp.sum(rollouts.costs, axis=1))
+        costs = jnp.sum(rollouts.costs, axis=1)
+        J_star = costs[min_cost_idx]
+        U_star = rollouts.controls[min_cost_idx]
+
+        return J_star, U_star, x
+
+    print("Starting data collection...")
     start_time = time.perf_counter()
 
     # RNG
@@ -40,48 +54,20 @@ def compute_baseline(filename: str, ctrl: SamplingBasedController, env: Training
     # Initial state
     x = env.init_state(key)
 
+    keys = jax.random.split(key, num_compute)
+    J_stars, U_stars, xs = jax.vmap(_single_compute, in_axes=(None, None, None, 0))(x, ctrl, params, keys)
+
+    print(f"J_stars shape: {J_stars.shape}, U_stars shape: {U_stars.shape}")
+
     # Go through a grid in the statespace
     with open(filename, 'wb') as f:
-        for i in range(num_compute):
-            key = jax.random.PRNGKey(i)
-            # Get a state
-            x = x.replace(data=env.reset(x.data, key))
-            # q = 1.5*jnp.ones(1)
-            # x = x.replace(data=x.data.replace(qpos=q))
-
-            # Compute the value at each point
-            params, rollouts = compute_value(x.data, ctrl, params)
-
-            # Single optimization result
-            min_cost_idx = jnp.argmin(jnp.sum(rollouts.costs, axis=1))
-            costs = jnp.sum(rollouts.costs, axis=1)
-            J_star = costs[min_cost_idx]
-            U_star = rollouts.controls[min_cost_idx]
-            print(f"[OL] average rollout cost: {jnp.mean(costs)}, standard dev rollout cost: {jnp.std(costs)}"
-                  f" minimum rollout cost: {J_star}")
-
-            data_chunk = {'J_star': J_star, 'U_star': U_star, 'state': x}
-            pickle.dump(data_chunk, f)
+        data_chunk = {'J_star': J_stars, 'U_star': U_stars, 'state': xs}
+        pickle.dump(data_chunk, f)
 
     end_time = time.perf_counter()
+    print("End of data collection.")
     print(f"Time taken: {end_time - start_time}s")
 
-    # x_traj = rollouts.trace_sites[min_cost_idx, :, 0, :]
-
-    # time = jnp.linspace(params.tk[0], params.tk[-1], U_star.shape[0])
-    # time_x = jnp.linspace(params.tk[0], params.tk[-1], x_traj.shape[0])
-
-    # fig, axes = plt.subplots(4, 1)
-    # axes[0].plot(time, U_star)
-    # axes[0].set_ylabel("U")
-    # for i in range(x_traj.shape[1]):
-    #     axes[i + 1].plot(time_x, x_traj[:, i])
-    #     label = ["X", "Y", "Z"]
-    #     axes[i + 1].set_ylabel(label[i])
-    # plt.show()
-
-    # Save to a file
-    # csv saved as (state, value, trajectory)
 
 def parse_value_data(filename: str) -> None:
     """Parse the value data from a file."""
@@ -118,7 +104,9 @@ def extract_data(filename: str, env: TrainingEnv) -> Tuple[jax.Array, jax.Array]
                 data_chunk = pickle.load(f)
                 J_star = jnp.append(J_star, data_chunk['J_star'])
                 state = data_chunk['state']
-                obs = jnp.append(obs, env.get_obs(state.data))
+                for i in range(J_star.shape[0]):
+                    data = jax.tree.map(lambda x: x[i], state.data)
+                    obs = jnp.append(obs, env.get_obs(data))
             except EOFError:
                 break
 
@@ -128,31 +116,37 @@ def extract_data(filename: str, env: TrainingEnv) -> Tuple[jax.Array, jax.Array]
     return J_star, obs
 
 
-@nnx.jit
 def fit_value_function(model: nnx.Module,
                        optimizer: nnx.Optimizer,
                        J_star: jax.Array,
                        obs: jax.Array,
-                       # batch_size: int,
-                       # num_epochs: int,
+                       batch_size: int,
+                       num_epochs: int,
                        rng: jax.Array) -> Tuple[jax.Array, jax.Array]:
     """Fit a value function to the data."""
-    batch_size = 1 #5 #128
-    num_epochs = 200
     num_data_points = J_star.shape[0]
     num_batches = max(1, num_data_points // batch_size)
 
     def _loss_fn(model: nnx.Module, obs: jax.Array, value_targets: jax.Array) -> jax.Array:
         """Fitted Value Iteration loss function."""
         pred = model(obs)
+        value_targets = value_targets.reshape(-1, 1)
+        # print(f"pred shape: {pred.shape}")
+        # print(f"value_targets shape: {value_targets.shape}")
+        # print(f"square shape: {jnp.square(pred - value_targets).shape}")
+        # print(f"mean shape: {jnp.mean(jnp.square(pred - value_targets)).shape}")
         return 0.5 * jnp.mean(jnp.square(pred - value_targets))
 
+    @nnx.jit
     def _train_step(model: nnx.Module, optimizer: nnx.Optimizer, rng: jax.Array) -> Tuple:
         """Take a single gradient descent step on a batch of data."""
         rng, batch_rng = jax.random.split(rng)
         batch_idx = jax.random.randint(batch_rng, (batch_size,), 0, num_data_points)
         batch_obs = obs[batch_idx]
         batch_value_targets = J_star[batch_idx]
+
+        # print(f"batch_obs shape: {batch_obs.shape}")
+        # print(f"batch_value shape: {batch_value_targets.shape}")
 
         loss, grad = nnx.value_and_grad(_loss_fn)(model, batch_obs, batch_value_targets)
 
@@ -167,14 +161,11 @@ def fit_value_function(model: nnx.Module,
     @nnx.scan
     def _scan_fn(carry: Tuple, _: int) -> Tuple:
         """Scan function for the gradient descent."""
-        rng, optimizer, model = carry
-        rng, loss, grad_norm = _train_step(model, optimizer, rng)
-        return (rng, optimizer, model), (loss, grad_norm)
+        rng_train, optimizer_train, model_train = carry
+        rng_train, loss, grad_norm = _train_step(model_train, optimizer_train, rng_train)
+        return (rng_train, optimizer_train, model_train), (loss, grad_norm)
 
-    print(f"Total train steps: {num_epochs*num_batches}")
     _, (losses, grad_norms) = _scan_fn((rng, optimizer, model), jnp.arange(num_batches*num_epochs))
-
-    jax.debug.print("grad norms: {}", grad_norms)
 
     return losses, grad_norms
 
@@ -182,8 +173,12 @@ def value_train(env: TrainingEnv,
         net: nnx.Module,
         filename: str,
         learning_rate: float = 1e-3,
+        num_epochs: int = 200,
+        batch_size: int = 128,
+        print_every: int = 20,
       )->None:
     """Train a value function approximator."""
+    start_time = time.perf_counter()
     # Print some info about the policy architecture
     params = nnx.state(net, nnx.Param)
     total_params = sum([np.prod(x.shape) for x in jax.tree.leaves(params)], 0)
@@ -204,11 +199,8 @@ def value_train(env: TrainingEnv,
     )
 
     J_star, obs = extract_data(filename, env)
-    print(f"obs size: {obs.shape}")
     print(f"{J_star.shape[0]} data points.")
-
-    losses, grad_norms = fit_value_function(net, optimizer, J_star, obs, jax.random.PRNGKey(0))
-    print(f"Loss: {losses[-1]}")
+    print(f"Training over {num_epochs} epochs.")
 
     # Define log directory
     log_dir = os.path.join("logs", "value_function_fitting", str(int(time.time())))
@@ -219,11 +211,29 @@ def value_train(env: TrainingEnv,
     writer = SummaryWriter(log_dir)
     print(f"TensorBoard logs will be written to: {log_dir}")
 
-    for i in range(losses.shape[0]):
-        writer.add_scalar("grad_norm", grad_norms[i], i)
-        writer.add_scalar("loss", losses[i], i)
+    # Break the epochs into groups and print after each group
+    epoch_groups = max(1, num_epochs // print_every)
+    epochs_per_group = min(num_epochs, print_every)
+    for i in range(epoch_groups):
+        losses, grad_norms = fit_value_function(net, optimizer, J_star, obs,
+                                                batch_size, epochs_per_group,
+                                                jax.random.PRNGKey(0),
+                                                )
+        print(f"Epoch {(i+1)*min(print_every, num_epochs)}. Loss: {losses[-1]}.")
+        # print(f"Loss shape: {losses.shape}. Grad norm shape: {grad_norms.shape}. Epochs per group: {epochs_per_group}")
+        for j in range(losses.shape[0]):
+            writer.add_scalar("grad_norm", float(grad_norms[j]), i*losses.shape[0] + j)
+            writer.add_scalar("loss", float(losses[j]), i*losses.shape[0] + j)
+
+    print("")
+    print(f"Fitting complete. Loss: {losses[-1]}")
+
 
     writer.close()
+
+    end_time = time.perf_counter()
+
+    print(f"Fitting took {end_time - start_time} seconds.")
 
     if obs.shape[1] == 3:   # Just for the pendulum
         # Plot the value network to see how it looks
@@ -249,9 +259,10 @@ def value_train(env: TrainingEnv,
         # print(f"Z size: {Z.shape}")
 
         plt.imshow(Z, origin='lower', aspect='auto', cmap='viridis', extent=(X.min(), X.max(), Y.min(), Y.max()))
-        theta = jnp.arctan2(obs[:, 1], obs[:, 0]).reshape(-1)
-        theta_dot = obs[:, 2]
-        plt.scatter(theta, theta_dot, c=J_star, cmap='viridis')
+        max_points = min(obs.shape[0], 1000)
+        theta = jnp.arctan2(obs[:max_points, 1], obs[:max_points, 0]).reshape(-1)
+        theta_dot = obs[:max_points, 2]
+        plt.scatter(theta, theta_dot, c=J_star[:max_points], cmap='viridis')
         plt.colorbar(label='Z Value')
         plt.xlabel('theta')
         plt.ylabel('theta dot')

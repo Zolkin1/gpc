@@ -13,11 +13,14 @@ from gpc.value_learning.value_baseline import compute_baseline, parse_value_data
 if __name__ == "__main__":
     horizon = 1.0
     knots = int(horizon * 10)
-    iters = 1 #5 #1
+    iters = 2 #5 #1
 
-    num_compute = 100 #1000
+    num_compute = 1000
 
-    filename = os.getcwd() + "/gpc/value_learning/data/value_data_2.pkl"
+    # filename = os.getcwd() + "/gpc/value_learning/data/value_data_3.pkl"
+    # filename = os.getcwd() + "/gpc/value_learning/data/value_data_10k.pkl"
+    # filename = os.getcwd() + "/gpc/value_learning/data/pend_cma_es_2_iter_value_data_5k.pkl"
+    filename = os.getcwd() + "/gpc/value_learning/data/pend_cma_es_2_iter_value_data_1k.pkl"
 
     env = PendulumEnv(episode_length=200)
     ctrl = Evosax(env.task,
@@ -28,17 +31,22 @@ if __name__ == "__main__":
                   num_knots=knots,
                   iterations=iters,
                   spline_type="zero")
+    # ctrl = PredictiveSampling(env.task,
+    #               num_samples=256,
+    #               plan_horizon=horizon,
+    #               noise_level=0.1,
+    #               num_knots=knots,
+    #               iterations=iters,
+    #               spline_type="zero")
     # compute_baseline(filename, ctrl, env, num_compute)
-    # parse_value_data(filename)
-    # J_star, qpos, qvel = extract_data(filename)
-    # fitted_model = fit_value_function(env=env, J_star=J_star, qpos=qpos, qvel=qvel)
+
 
     net = ValueMLP(
         observation_size=env.observation_size,
         hidden_layers=[32, 32],
         rngs=nnx.Rngs(0),
     )
-    value_train(env, net, filename)
+    value_train(env=env, net=net, filename=filename, num_epochs=500, batch_size=50, print_every=50)
 
     # ctrl_ps = PredictiveSampling(env.task,
     #               num_samples=256,
