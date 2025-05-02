@@ -8,7 +8,8 @@ from flax import nnx
 from gpc.envs import PendulumEnv
 from gpc.architectures import ValueMLP
 from gpc.training import train
-from gpc.value_learning.value_baseline import compute_baseline, parse_value_data, extract_data, fit_value_function, value_train
+from gpc.value_learning.value_baseline import compute_baseline, parse_value_data, extract_data
+from gpc.value_learning.value_training import value_train
 
 if __name__ == "__main__":
     horizon = 1.0
@@ -39,6 +40,7 @@ if __name__ == "__main__":
     #               iterations=iters,
     #               spline_type="zero")
     # compute_baseline(filename, ctrl, env, num_compute)
+    J_star, obs = extract_data(filename, env)
 
 
     net = ValueMLP(
@@ -46,7 +48,7 @@ if __name__ == "__main__":
         hidden_layers=[32, 32],
         rngs=nnx.Rngs(0),
     )
-    value_train(env=env, net=net, filename=filename, num_epochs=500, batch_size=50, print_every=50)
+    value_train(env=env, net=net, J_star=J_star, obs=obs, num_epochs=500, batch_size=50, print_every=50)
 
     # ctrl_ps = PredictiveSampling(env.task,
     #               num_samples=256,
